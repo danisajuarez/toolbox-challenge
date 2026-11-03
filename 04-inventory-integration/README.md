@@ -25,6 +25,7 @@
 |---------|--------|------------|
 | `dss.md` | Diagrama de Secuencia del Sistema, uno por función, con los caminos de éxito y de error | Punto 1 del "Se pide" |
 | `documentacion-integracion.md` | Documento de integración: contrato de la API, mapeo de errores, decisiones transversales, supuestos | Punto 2 del "Se pide" (máximo 3 hojas) |
+| `documentacion-integracion.pdf` | El mismo documento exportado a PDF A4, 3 páginas, para entregar | Punto 2 del "Se pide" |
 
 Los diagramas están en Mermaid, que GitHub renderiza directamente. Para exportar a PDF o imagen se puede usar https://mermaid.live sin instalar nada.
 
