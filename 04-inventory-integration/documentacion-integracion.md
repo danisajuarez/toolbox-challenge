@@ -52,8 +52,8 @@ Esta tabla es el corazón de la integración. Los códigos del tercero son los q
 | Consultar | `PD-003` existe, agotado | `409 PRODUCT_OUT_OF_STOCK` | Mismo criterio que PD-002. El `code` distingue los casos; el HTTP agrupa la categoría. |
 | Cargar | `200` cargado | `201 Created` | Nuestro cliente creó un recurso; 201 es más preciso que repetir el 200 del tercero. |
 | Cargar | `401` / `403` falló la transacción | `502 UPSTREAM_REJECTED` | El tercero rechazó **nuestras** credenciales o permisos. El cliente no hizo nada mal: devolverle 401 lo induciría a re-autenticarse contra nosotros sin sentido. 502 dice "el upstream falló", que es la verdad. Además se dispara una alerta a operaciones. |
-| Cualquiera | código no documentado, 5xx | `502 UPSTREAM_ERROR` | Fallo del proveedor. Se loguea el código recibido para detectar cambios no anunciados en su contrato. |
-| Cualquiera | sin respuesta | `504 UPSTREAM_TIMEOUT` | Timeout propio, para no dejar al cliente colgado. |
+| Cualquiera | código no documentado, 5xx | `502 UPSTREAM_ERROR` | Fallo del proveedor. Se loguea el código recibido para detectar cambios no anunciados en su contrato. En escrituras, un 5xx deja el resultado **incierto** (ver sección 5). |
+| Cualquiera | sin respuesta | `504 UPSTREAM_TIMEOUT` | Timeout propio, para no dejar al cliente colgado. En un POST el resultado queda **desconocido** (ver sección 5). |
 
 El campo `upstreamCode` conserva siempre el código original del tercero. Así nadie tiene que adivinar qué significaba un `409` cuando se investiga un incidente.
 
@@ -67,8 +67,8 @@ El campo `upstreamCode` conserva siempre el código original del tercero. Así n
 | **Credenciales del tercero** | Viven en un gestor de secretos y se inyectan por configuración. Un 401/403 del tercero genera alerta porque suele indicar credencial vencida o rotada. |
 | **Correlación** | La API genera un `X-Correlation-Id` por petición, lo propaga al tercero y lo incluye en logs y respuestas. Es la primera herramienta de diagnóstico en una integración. |
 | **Timeouts** | Timeout de conexión y de respuesta hacia el tercero (valor orientativo: 5 s). Sin timeout, un proveedor lento agota los recursos de nuestra API. |
-| **Reintentos** | Solo en `GET /getProduct` (idempotente), un reintento con backoff corto. **Nunca** en los POST: reintentar un alta o una carga puede duplicar registros si el tercero no es idempotente. |
-| **Orden en el alta de usuario** | Primero el tercero, después la base local. Si el tercero falla, no queda nada creado y el cliente puede reintentar sin riesgo. Si falla el INSERT local después de que el tercero aceptó, queda un usuario en el tercero sin copia local: se loguea como ERROR con `correlationId` para reconciliación manual. Es una ventana pequeña y aceptable para esta primera versión. |
+| **Reintentos** | Solo en `GET /getProduct` (idempotente), un reintento con backoff corto. **Nunca** en los POST: reintentar un alta o una carga puede duplicar registros si el tercero no es idempotente. En escrituras hay que distinguir la respuesta del tercero: un **4xx** es un rechazo de la solicitud, se corrige la causa antes de reintentar; un **5xx** o un **timeout** no prueban que la operación no ocurrió, porque el tercero pudo procesarla y fallar después (por ejemplo al construir la respuesta) o perderse la respuesta. Por eso un 502 por 5xx o un 504 en escritura se loguean para reconciliación y no se reintentan a ciegas. |
+| **Orden en el alta de usuario** | Primero el tercero, después la base local. Si el tercero responde **4xx**, rechazó la solicitud: no queda nada creado y se corrige la causa antes de reintentar. Si responde **5xx** o **no responde**, el resultado es incierto: pudo haber creado el usuario y fallar después. Aplica la regla de reintentos: log para reconciliación, sin reintento ciego. Si falla el INSERT local después de que el tercero aceptó, queda un usuario en el tercero sin copia local: se loguea como ERROR con `correlationId` para reconciliación manual. Es una ventana pequeña y aceptable para esta primera versión. |
 | **Validación de entrada** | Esquema estricto antes de salir hacia el tercero. Errores de validación responden 400 sin tocar el proveedor. |
 | **Logs** | Una línea por transacción con el tercero: endpoint, status recibido, código de negocio, latencia y `correlationId`. Sin payloads completos, para no filtrar datos personales a los logs. |
 | **Transporte** | `https://` hacia el tercero. El enunciado escribe `http://`; si el proveedor realmente no ofrece TLS, es un riesgo que hay que escalar antes de salir a producción, porque viajan datos de usuarios. |
@@ -96,6 +96,7 @@ Lo que el enunciado no define y tuvimos que asumir. Cada uno debe confirmarse co
 ## 8. Riesgos y evolución
 
 - **Contrato del tercero sin especificar**: es el mayor riesgo. El primer paso real del proyecto es obtener su documentación o un entorno de prueba y validar cada supuesto de la sección 7.
+- **Errores 5xx y timeouts en escrituras**: ni un 5xx del tercero ni un timeout prueban que la operación no ocurrió. La mitigación inmediata es el log para reconciliación; la definitiva es acordar idempotencia con el proveedor (clave de idempotencia por petición, o consultar por `email`/`sku` antes de reintentar).
 - **Inconsistencia usuario tercero / local**: si la ventana descrita en la sección 5 resulta inaceptable, el siguiente paso es persistir el usuario primero en estado `pending_sync` y sincronizar con reintento diferido (patrón outbox). No se implementa ahora para no agregar infraestructura sin evidencia de que hace falta.
 - **Cambios no anunciados en los códigos del tercero**: los logs de `UPSTREAM_ERROR` con el código recibido son la señal temprana.
 - **Disponibilidad del proveedor**: si el tercero cae, nuestra API responde 502/504 de forma controlada. Un circuit breaker es una mejora natural cuando haya métricas que lo justifiquen.

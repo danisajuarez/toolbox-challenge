@@ -83,7 +83,7 @@ paths:
         "502":
           $ref: "#/components/responses/UpstreamError"
         "504":
-          $ref: "#/components/responses/UpstreamTimeout"
+          $ref: "#/components/responses/UpstreamTimeoutUnknownOutcome"
 
   /products:
     post:
@@ -139,7 +139,7 @@ paths:
                     upstreamStatus: 500
                     correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
         "504":
-          $ref: "#/components/responses/UpstreamTimeout"
+          $ref: "#/components/responses/UpstreamTimeoutUnknownOutcome"
 
   /products/{productId}:
     get:
@@ -243,17 +243,26 @@ components:
       description: Minimal fields. The provider's real contract may require more; see assumptions in the integration document.
 
     User:
-      allOf:
-        - $ref: "#/components/schemas/NewUser"
-        - type: object
-          required: [id, createdAt]
-          properties:
-            id:
-              type: string
-              format: uuid
-            createdAt:
-              type: string
-              format: date-time
+      type: object
+      description: >
+        Defined on its own instead of extending NewUser with allOf: NewUser has
+        additionalProperties: false, and allOf validates against every member, so an
+        instance with id or createdAt would be rejected by the base schema.
+      required: [id, email, name, createdAt]
+      properties:
+        id:
+          type: string
+          format: uuid
+        email:
+          type: string
+          format: email
+          example: juan@empresa.com
+        name:
+          type: string
+          example: Juan Pérez
+        createdAt:
+          type: string
+          format: date-time
 
     NewProduct:
       type: object
@@ -274,14 +283,23 @@ components:
           example: 25
 
     Product:
-      allOf:
-        - $ref: "#/components/schemas/NewProduct"
-        - type: object
-          required: [id]
-          properties:
-            id:
-              type: string
-              description: Product identifier as known by the provider.
+      type: object
+      description: "Defined on its own for the same reason as User (allOf plus additionalProperties: false)."
+      required: [id, sku, name, quantity]
+      properties:
+        id:
+          type: string
+          description: Product identifier as known by the provider.
+        sku:
+          type: string
+          example: SKU-0001
+        name:
+          type: string
+          example: Teclado mecánico
+        quantity:
+          type: integer
+          minimum: 0
+          example: 25
 
     Error:
       type: object
@@ -346,7 +364,11 @@ components:
             correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
 
     UpstreamError:
-      description: The provider returned an error or an undocumented response.
+      description: >
+        The provider returned an error or an undocumented response. A provider 4xx means the
+        request was rejected. On write operations, a provider 5xx leaves the outcome uncertain
+        (the provider may have completed the operation before failing); it is logged for
+        reconciliation and must not be retried blindly. See the integration document, section 5.
       headers:
         X-Correlation-Id:
           $ref: "#/components/headers/XCorrelationId"
@@ -360,8 +382,25 @@ components:
             upstreamStatus: 500
             correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
 
+    UpstreamTimeoutUnknownOutcome:
+      description: >
+        The provider did not answer within the configured timeout on a write operation.
+        The outcome is unknown: the provider may have processed the request and lost the response.
+        The case is logged for reconciliation. Do not retry blindly; see the integration document, section 5.
+      headers:
+        X-Correlation-Id:
+          $ref: "#/components/headers/XCorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UPSTREAM_TIMEOUT
+            message: The inventory provider did not respond in time; the outcome of the operation is unknown
+            correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+
     UpstreamTimeout:
-      description: The provider did not answer within the configured timeout.
+      description: The provider did not answer within the configured timeout. Safe to retry (read operation).
       headers:
         X-Correlation-Id:
           $ref: "#/components/headers/XCorrelationId"

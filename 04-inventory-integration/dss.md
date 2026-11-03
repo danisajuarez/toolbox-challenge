@@ -23,11 +23,15 @@ sequenceDiagram
 
     C->>API: POST /users {email, name, ...}
     API->>API: Autenticar cliente, validar body, generar correlationId
-    alt token inválido
+    break token inválido
         API-->>C: 401 UNAUTHORIZED
-    else body inválido
+    end
+    break body inválido
         API-->>C: 400 VALIDATION_ERROR
-    else usuario ya existe localmente
+    end
+    API->>DB: SELECT user by email
+    DB-->>API: existe / no existe
+    break usuario ya existe localmente
         API-->>C: 409 USER_ALREADY_EXISTS
     end
 
@@ -43,11 +47,16 @@ sequenceDiagram
             API->>API: log ERROR con correlationId (usuario en tercero sin copia local)
             API-->>C: 500 INTERNAL_ERROR
         end
-    else tercero rechaza (4xx / 5xx)
-        T-->>API: error
+    else tercero rechaza la solicitud (4xx)
+        T-->>API: 4xx
+        API-->>C: 502 UPSTREAM_ERROR {upstreamStatus}
+    else error del tercero (5xx)
+        T-->>API: 5xx (resultado incierto: pudo haber registrado al usuario)
+        API->>API: log WARN con correlationId para reconciliación
         API-->>C: 502 UPSTREAM_ERROR {upstreamStatus}
     else tercero no responde
-        T-->>API: timeout
+        T-->>API: timeout (resultado incierto: pudo haber registrado al usuario)
+        API->>API: log WARN con correlationId para reconciliación
         API-->>C: 504 UPSTREAM_TIMEOUT
     end
 ```
@@ -63,9 +72,10 @@ sequenceDiagram
 
     C->>API: GET /products/{productId}
     API->>API: Autenticar cliente, validar productId, generar correlationId
-    alt token inválido
+    break token inválido
         API-->>C: 401 UNAUTHORIZED
-    else productId inválido
+    end
+    break productId inválido
         API-->>C: 400 VALIDATION_ERROR
     end
 
@@ -103,9 +113,10 @@ sequenceDiagram
 
     C->>API: POST /products {sku, name, quantity, ...}
     API->>API: Autenticar cliente, validar body, generar correlationId
-    alt token inválido
+    break token inválido
         API-->>C: 401 UNAUTHORIZED
-    else body inválido
+    end
+    break body inválido
         API-->>C: 400 VALIDATION_ERROR
     end
 
@@ -117,11 +128,16 @@ sequenceDiagram
         T-->>API: 401 o 403
         API->>API: log ERROR + alerta (posible problema de credenciales con el tercero)
         API-->>C: 502 UPSTREAM_REJECTED {upstreamStatus: 401|403}
-    else otro 4xx / 5xx
-        T-->>API: error
-        API-->>C: 502 UPSTREAM_ERROR
+    else otro 4xx (rechazo de la solicitud)
+        T-->>API: 4xx
+        API-->>C: 502 UPSTREAM_ERROR {upstreamStatus}
+    else error del tercero (5xx)
+        T-->>API: 5xx (resultado incierto: pudo haber cargado el producto)
+        API->>API: log WARN con correlationId para reconciliación
+        API-->>C: 502 UPSTREAM_ERROR {upstreamStatus}
     else tercero no responde
-        T-->>API: timeout (sin reintento, es POST)
+        T-->>API: timeout (resultado incierto: pudo haber cargado el producto)
+        API->>API: log WARN con correlationId para reconciliación (sin reintento, es POST)
         API-->>C: 504 UPSTREAM_TIMEOUT
     end
 ```
@@ -129,6 +145,7 @@ sequenceDiagram
 ## Convenciones de los diagramas
 
 - `autonumber` numera cada transacción para poder referenciarla en la documentación y en los logs.
-- Las ramas de autenticación y validación se dibujan una vez por diagrama; en la implementación son un middleware compartido.
+- Los bloques `break` son ramas que **terminan el flujo**: una petición no autenticada o inválida responde y no ejecuta nada de lo que sigue, en particular nunca llega al tercero. En la implementación son un middleware compartido.
+- En los POST, un **5xx** o un **timeout** del tercero dejan el resultado **incierto**: pudo haber procesado la operación y fallar después, o perderse la respuesta. Por eso esas ramas loguean para reconciliación y no reintentan. Un **4xx** sí es un rechazo de la solicitud.
 - El `X-Correlation-Id` se genera en la API y se propaga al tercero en cada llamada. Es lo que permite seguir una transacción de punta a punta cuando algo falla.
 - Los códigos de error de nuestra API (`PRODUCT_RESERVED`, `UPSTREAM_REJECTED`, etc.) y su justificación están en `documentacion-integracion.md`.
