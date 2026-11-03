@@ -1,0 +1,375 @@
+openapi: 3.0.3
+info:
+  title: Inventory API
+  version: 1.0.0
+  description: |
+    Facade API over the third-party inventory provider `serviciodetercero.com`.
+    Clients authenticate against this API; the provider's credentials never leave the server.
+    Every response carries an `X-Correlation-Id` header that is also propagated to the provider.
+
+    Third-party error codes are preserved in `upstreamCode` / `upstreamStatus` for traceability.
+    Error mapping rationale lives in `documentacion-integracion.md`, section 4.
+
+servers:
+  - url: https://inventory.example.com/v1
+    description: Placeholder. The real host is not defined in the challenge statement.
+
+security:
+  - bearerAuth: []
+
+tags:
+  - name: Users
+    description: User registration, mirrored in the provider.
+  - name: Products
+    description: Product query and upload, delegated to the provider.
+
+paths:
+  /users:
+    post:
+      tags: [Users]
+      summary: Create a user
+      description: >
+        Registers the user in the third-party provider (`POST /connect/upload`)
+        and then persists it locally. Nothing is persisted if the provider rejects the request.
+      operationId: createUser
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewUser"
+      responses:
+        "201":
+          description: User created locally and registered in the provider.
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/User"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "409":
+          description: A user with the same email already exists locally.
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: USER_ALREADY_EXISTS
+                message: A user with this email already exists
+                correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+        "500":
+          description: >
+            The provider accepted the user but the local persistence failed.
+            Logged with the correlation id for manual reconciliation.
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: INTERNAL_ERROR
+                message: User was registered upstream but could not be persisted locally
+                correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "504":
+          $ref: "#/components/responses/UpstreamTimeout"
+
+  /products:
+    post:
+      tags: [Products]
+      summary: Upload a product
+      description: >
+        Forwards the product to the provider (`POST /upload/product`).
+        A provider `200` becomes `201`; a provider `401` or `403` becomes `502 UPSTREAM_REJECTED`
+        because the failure is between this API and the provider, not the client's fault.
+      operationId: createProduct
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/NewProduct"
+      responses:
+        "201":
+          description: Product uploaded to the provider.
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "502":
+          description: >
+            The provider rejected the transaction (`UPSTREAM_REJECTED`, provider replied 401/403)
+            or failed in an unexpected way (`UPSTREAM_ERROR`).
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                rejected:
+                  value:
+                    code: UPSTREAM_REJECTED
+                    message: The inventory provider rejected the transaction
+                    upstreamStatus: 403
+                    correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+                unexpected:
+                  value:
+                    code: UPSTREAM_ERROR
+                    message: The inventory provider returned an unexpected response
+                    upstreamStatus: 500
+                    correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+        "504":
+          $ref: "#/components/responses/UpstreamTimeout"
+
+  /products/{productId}:
+    get:
+      tags: [Products]
+      summary: Get a product
+      description: >
+        Queries the provider (`GET /getProduct`). Provider business codes are mapped:
+        `PD-001` to `404 PRODUCT_NOT_FOUND`, `PD-002` to `409 PRODUCT_RESERVED`,
+        `PD-003` to `409 PRODUCT_OUT_OF_STOCK`. The original code is returned in `upstreamCode`.
+      operationId: getProduct
+      parameters:
+        - name: productId
+          in: path
+          required: true
+          schema:
+            type: string
+            minLength: 1
+      responses:
+        "200":
+          description: Product found and available.
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+        "400":
+          $ref: "#/components/responses/ValidationError"
+        "401":
+          $ref: "#/components/responses/Unauthorized"
+        "404":
+          description: The product does not exist in the provider (`PD-001`).
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              example:
+                code: PRODUCT_NOT_FOUND
+                message: Product does not exist
+                upstreamCode: PD-001
+                correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+        "409":
+          description: The product exists but its state prevents the operation (`PD-002` reserved, `PD-003` out of stock).
+          headers:
+            X-Correlation-Id:
+              $ref: "#/components/headers/XCorrelationId"
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Error"
+              examples:
+                reserved:
+                  value:
+                    code: PRODUCT_RESERVED
+                    message: Product exists but is reserved
+                    upstreamCode: PD-002
+                    correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+                outOfStock:
+                  value:
+                    code: PRODUCT_OUT_OF_STOCK
+                    message: Product exists but is out of stock
+                    upstreamCode: PD-003
+                    correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+        "502":
+          $ref: "#/components/responses/UpstreamError"
+        "504":
+          $ref: "#/components/responses/UpstreamTimeout"
+
+components:
+  securitySchemes:
+    bearerAuth:
+      type: http
+      scheme: bearer
+      bearerFormat: JWT
+
+  headers:
+    XCorrelationId:
+      description: Identifier generated per request and propagated to the provider. Use it when reporting an incident.
+      schema:
+        type: string
+        format: uuid
+
+  schemas:
+    NewUser:
+      type: object
+      required: [email, name]
+      additionalProperties: false
+      properties:
+        email:
+          type: string
+          format: email
+          example: juan@empresa.com
+        name:
+          type: string
+          minLength: 1
+          example: Juan Pérez
+      description: Minimal fields. The provider's real contract may require more; see assumptions in the integration document.
+
+    User:
+      allOf:
+        - $ref: "#/components/schemas/NewUser"
+        - type: object
+          required: [id, createdAt]
+          properties:
+            id:
+              type: string
+              format: uuid
+            createdAt:
+              type: string
+              format: date-time
+
+    NewProduct:
+      type: object
+      required: [sku, name, quantity]
+      additionalProperties: false
+      properties:
+        sku:
+          type: string
+          minLength: 1
+          example: SKU-0001
+        name:
+          type: string
+          minLength: 1
+          example: Teclado mecánico
+        quantity:
+          type: integer
+          minimum: 0
+          example: 25
+
+    Product:
+      allOf:
+        - $ref: "#/components/schemas/NewProduct"
+        - type: object
+          required: [id]
+          properties:
+            id:
+              type: string
+              description: Product identifier as known by the provider.
+
+    Error:
+      type: object
+      required: [code, message, correlationId]
+      properties:
+        code:
+          type: string
+          description: Stable machine-readable code. Clients should branch on this, not on `message`.
+          enum:
+            - VALIDATION_ERROR
+            - UNAUTHORIZED
+            - USER_ALREADY_EXISTS
+            - PRODUCT_NOT_FOUND
+            - PRODUCT_RESERVED
+            - PRODUCT_OUT_OF_STOCK
+            - UPSTREAM_REJECTED
+            - UPSTREAM_ERROR
+            - UPSTREAM_TIMEOUT
+            - INTERNAL_ERROR
+        message:
+          type: string
+          description: Human-readable explanation. Not stable; do not parse.
+        upstreamCode:
+          type: string
+          description: Business code returned by the provider, when any (for example `PD-002`).
+          example: PD-002
+        upstreamStatus:
+          type: integer
+          description: HTTP status returned by the provider, when relevant.
+          example: 403
+        correlationId:
+          type: string
+          format: uuid
+
+  responses:
+    ValidationError:
+      description: The request body or parameters failed validation. The provider was not called.
+      headers:
+        X-Correlation-Id:
+          $ref: "#/components/headers/XCorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: VALIDATION_ERROR
+            message: "email: must be a valid email address"
+            correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+
+    Unauthorized:
+      description: Missing or invalid bearer token for this API.
+      headers:
+        X-Correlation-Id:
+          $ref: "#/components/headers/XCorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UNAUTHORIZED
+            message: Missing or invalid bearer token
+            correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+
+    UpstreamError:
+      description: The provider returned an error or an undocumented response.
+      headers:
+        X-Correlation-Id:
+          $ref: "#/components/headers/XCorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UPSTREAM_ERROR
+            message: The inventory provider returned an unexpected response
+            upstreamStatus: 500
+            correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f
+
+    UpstreamTimeout:
+      description: The provider did not answer within the configured timeout.
+      headers:
+        X-Correlation-Id:
+          $ref: "#/components/headers/XCorrelationId"
+      content:
+        application/json:
+          schema:
+            $ref: "#/components/schemas/Error"
+          example:
+            code: UPSTREAM_TIMEOUT
+            message: The inventory provider did not respond in time
+            correlationId: 4f1c2d3e-8a9b-4c5d-9e0f-1a2b3c4d5e6f

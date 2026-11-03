@@ -26,6 +26,7 @@
 | `dss.md` | Diagrama de Secuencia del Sistema, uno por función, con los caminos de éxito y de error | Punto 1 del "Se pide" |
 | `documentacion-integracion.md` | Documento de integración: contrato de la API, mapeo de errores, decisiones transversales, supuestos | Punto 2 del "Se pide" (máximo 3 hojas) |
 | `documentacion-integracion.pdf` | El mismo documento exportado a PDF A4, 3 páginas, para entregar | Punto 2 del "Se pide" |
+| `openapi.yaml` | Contrato formal de la Inventory API (OpenAPI 3.0.3): endpoints, esquemas, códigos de error y ejemplos. Validado con Redocly | Complemento al punto 2; no lo pide el enunciado |
 
 Los diagramas están en Mermaid, que GitHub renderiza directamente. Para exportar a PDF o imagen se puede usar https://mermaid.live sin instalar nada.
 
@@ -40,4 +41,4 @@ Los diagramas están en Mermaid, que GitHub renderiza directamente. Para exporta
 | Autenticación de nuestra API | No se menciona. | Bearer token. Es un supuesto, no un requisito. |
 | Protocolo | El enunciado usa `http://`. | Se recomienda `https://` y se deja como riesgo si el tercero no lo soporta. |
 | DSS | Se pide "un DSS incluyendo todas las transacciones". | Se interpreta DSS como Diagrama de Secuencia del Sistema y se entrega uno por función, con todas las ramas de respuesta del tercero. |
-| Código | No se pide. | No se implementa. Si el equipo lo pide, el siguiente paso natural sería una especificación OpenAPI y después el servicio. |
+| Código | No se pide. | No se implementa el servicio. Sí se entrega el contrato en `openapi.yaml`, que es el artefacto que un equipo de integraciones consume antes que el código y deja el mapeo de errores en un formato verificable. |
