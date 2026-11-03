@@ -1,0 +1,15 @@
+{
+  "name": "jwt-decode-exercise",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Exercise 3: decode the header and payload of a JWT without verifying its signature.",
+  "type": "module",
+  "engines": {
+    "node": ">=22.18"
+  },
+  "scripts": {
+    "test": "node --test 'src/**/*.test.ts'",
+    "decode": "node src/cli.ts",
+    "demo": "node src/cli.ts eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIiwibmFtZSI6IkpvaG4gRG9lIiwiaWF0IjoxNTE2MjM5MDIyfQ.SflKxwRJSMeKKF2QT4fwpMeJf36POk6yJV_adQssw5c"
+  }
+}
