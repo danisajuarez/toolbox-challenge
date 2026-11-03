@@ -25,6 +25,18 @@ export interface DecodedJwt {
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/;
 
 export function decodeJwt(token: string): DecodedJwt {
+  const [header, payload, signature] = splitSegments(token);
+
+  return {
+    header: decodeJsonSegment(header, "header"),
+    payload: decodeJsonSegment(payload, "payload"),
+    signature,
+  };
+}
+
+type JwtSegments = [header: string, payload: string, signature: string];
+
+function splitSegments(token: string): JwtSegments {
   const segments = token.split(".");
 
   if (segments.length !== 3) {
@@ -33,13 +45,9 @@ export function decodeJwt(token: string): DecodedJwt {
     );
   }
 
-  const [header, payload, signature] = segments;
-
-  return {
-    header: decodeJsonSegment(header, "header"),
-    payload: decodeJsonSegment(payload, "payload"),
-    signature,
-  };
+  // The length check above guarantees three strings; the assertion tells the
+  // compiler what the runtime check already proved.
+  return segments as JwtSegments;
 }
 
 function decodeJsonSegment(
@@ -81,11 +89,13 @@ Resultado para el token del enunciado:
 
 ## Cómo ejecutarlo
 
-Requiere Node 22.18 o superior, que ejecuta TypeScript sin compilar. No hay dependencias que instalar.
+Requiere Node 22.18 o superior, que ejecuta TypeScript sin compilar. No hay dependencias de runtime. `typescript` y `@types/node` están como `devDependencies` solo para el typecheck.
 
 ```sh
 cd 03-jwt-decode
+npm install       # solo instala el compilador para el typecheck
 npm test          # corre los tests con el runner nativo de Node
+npm run typecheck # tsc en modo strict, sin emitir archivos
 npm run demo      # decodifica el token del enunciado
 npm run decode -- <otro-token>
 ```
@@ -101,7 +111,8 @@ Un JWT en serialización compacta son tres segmentos separados por punto: `heade
 | Verificar que header y payload sean objetos JSON | La especificación (RFC 7519) exige que ambos sean objetos. Un string o un array decodificado sin error sería un token malformado que pasa en silencio. |
 | Devolver la firma cruda sin verificarla | El enunciado pide decodificar, no verificar. Se devuelve el segmento para que quien lo use lo vea, y el nombre y el comentario dejan claro que no está validado. |
 | Lanzar `Error` en lugar de devolver `null` | Un token inválido es un error de entrada, no un resultado vacío. Fallar explícito evita que un `null` se propague hasta un lugar donde ya no se entiende de dónde vino. |
-| TypeScript sin compilador ni dependencias | Node 22.18+ ejecuta `.ts` nativamente (type stripping). Se gana tipado en el código sin agregar `typescript`, `ts-node` ni un paso de build para un ejercicio de 50 líneas. |
+| TypeScript sin paso de build | Node 22.18+ ejecuta `.ts` nativamente (type stripping): no hay `ts-node` ni compilación para correr o testear. |
+| Typecheck con `tsc --noEmit` en modo `strict` más `noUncheckedIndexedAccess` | Ejecutar TypeScript sin verificar tipos es usar TypeScript a medias: el type stripping solo borra las anotaciones, no las valida. El typecheck detectó un error real: al desestructurar `token.split(".")` el compilador no sabe que hay tres elementos, aunque el `length` se haya verificado. Se resolvió con `splitSegments`, que devuelve una tupla tipada después del chequeo. |
 | Tests con `node:test` y `node:assert` | Mismo criterio: están en Node, no hay nada que instalar. Hay un test por regla: decodificación correcta, cantidad de segmentos, alfabeto base64url y tipo del contenido. |
 
 ## Lo que esta función NO hace, y por qué importa
@@ -120,6 +131,7 @@ Un detalle del enunciado: dice que el token "no está firmado ni encriptado". El
 |------|----------|-----------------------------------------------|
 | Lenguaje | TypeScript sobre Node. | El enunciado deja el lenguaje a elección. |
 | Entorno de ejecución | Node 22.18+ con type stripping nativo. En versiones anteriores habría que compilar con `tsc` o renombrar a `.js` y quitar las anotaciones de tipo. | Propuesta propia. |
+| Dependencias | Cero en runtime. `typescript` y `@types/node` solo como `devDependencies` para el typecheck; `node_modules` no se versiona. | Propuesta propia: sin typecheck, el tipado no estaría verificado por nadie. |
 | Alcance | Solo decodificación. No se verifica firma ni claims. | Requisito del enunciado; la sección anterior explica el límite. |
 | Validaciones de entrada | Cantidad de segmentos, alfabeto base64url y que header/payload sean objetos JSON. | Propuesta propia: lo mínimo para que un token inválido falle con un mensaje claro. |
 | Portabilidad a navegador | Se usa `Buffer`, que es de Node. En navegador se reemplazaría por `atob` tras convertir base64url a base64. No se abstrajo porque el enunciado no lo pide. | Propuesta propia. |

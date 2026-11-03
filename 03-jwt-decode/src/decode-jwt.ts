@@ -16,6 +16,18 @@ export interface DecodedJwt {
 const BASE64URL_PATTERN = /^[A-Za-z0-9_-]*$/;
 
 export function decodeJwt(token: string): DecodedJwt {
+  const [header, payload, signature] = splitSegments(token);
+
+  return {
+    header: decodeJsonSegment(header, "header"),
+    payload: decodeJsonSegment(payload, "payload"),
+    signature,
+  };
+}
+
+type JwtSegments = [header: string, payload: string, signature: string];
+
+function splitSegments(token: string): JwtSegments {
   const segments = token.split(".");
 
   if (segments.length !== 3) {
@@ -24,13 +36,9 @@ export function decodeJwt(token: string): DecodedJwt {
     );
   }
 
-  const [header, payload, signature] = segments;
-
-  return {
-    header: decodeJsonSegment(header, "header"),
-    payload: decodeJsonSegment(payload, "payload"),
-    signature,
-  };
+  // The length check above guarantees three strings; the assertion tells the
+  // compiler what the runtime check already proved.
+  return segments as JwtSegments;
 }
 
 function decodeJsonSegment(
